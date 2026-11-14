@@ -3,7 +3,7 @@
  * @ingroup tests
  * @brief   Test of a SQLiteCpp Column.
  *
- * Copyright (c) 2012-2021 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -19,12 +19,52 @@
 #include <stdint.h>
 
 
-TEST(Column, basis)
+TEST(Column, typeConstantsAsCaseLabels)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    SQLite::Statement query(db, "SELECT 42, 1.5, 'text', X'1234', NULL");
+
+    ASSERT_TRUE(query.executeStep());
+    ASSERT_EQ(5, query.getColumnCount());
+
+    // Each label must be a constant expression, and each code must match SQLite's runtime type.
+    for (int i = 0; i < query.getColumnCount(); ++i)
+    {
+        switch (query.getColumn(i).getType())
+        {
+            case SQLite::INTEGER:
+                EXPECT_EQ(0, i);
+                break;
+            case SQLite::FLOAT:
+                EXPECT_EQ(1, i);
+                break;
+            case SQLite::TEXT:
+                EXPECT_EQ(2, i);
+                break;
+            case SQLite::BLOB:
+                EXPECT_EQ(3, i);
+                break;
+            case SQLite::Null:
+                EXPECT_EQ(4, i);
+                break;
+            default:
+                FAIL() << "Unexpected type for column " << i;
+        }
+    }
+}
+
+
+static void test_column_basis(bool utf16)
 {
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
     EXPECT_EQ(SQLite::OK, db.getExtendedErrorCode());
+
+    if (utf16)
+    {
+        EXPECT_EQ(0, db.exec("PRAGMA encoding = 'UTF-16';"));
+    }
 
     // Create a new table
     EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, msg TEXT, int INTEGER, double REAL, binary BLOB, empty TEXT)"));
@@ -33,7 +73,7 @@ TEST(Column, basis)
     EXPECT_EQ(0, db.getLastInsertRowid());
 
     // Create a first row (autoid: 1) with all kind of data and a null value
-    SQLite::Statement   insert(db, "INSERT INTO test VALUES (NULL, \"first\", -123, 0.123, ?, NULL)");
+    SQLite::Statement   insert(db, "INSERT INTO test VALUES (NULL, 'first', -123, 0.123, ?, NULL)");
     // Bind the blob value to the first parameter of the SQL query
     const char  buffer[] = {'b', 'l', '\0', 'b'}; // "bl\0b" : 4 char, with a null byte inside
     const int   size = sizeof(buffer); // size = 4
@@ -69,57 +109,70 @@ TEST(Column, basis)
         const unsigned char uint3   = query.getColumn(0); // operator unsigned char()
         const unsigned short uint4  = query.getColumn(0); // operator unsigned short()
         const char*         ptxt    = query.getColumn(1); // operator const char*()
-        const std::string   msg     = query.getColumn(1); // operator std::string() (or const char* with MSVC)
+        const std::string   msg     = query.getColumn(1); // operator std::string()
+        const std::string_view sv   = query.getColumn(1); // operator std::string_view()
         const int           integer = query.getColumn(2); // operator int()
         const double        real    = query.getColumn(3); // operator double()
         const void*         pblob   = query.getColumn(4); // operator void*()
-#if !defined(_MSC_VER) || _MSC_VER >= 1900
-        // This implicit cast should use operator std::string()
-        // but would fallback to const char* with MSVC 2010-2013 (witch does not work with the NULL char in the middle)
         const std::string   sblob   = query.getColumn(4); // operator std::string()
-#endif
+        const std::string_view svblob = query.getColumn(4); // operator std::string_view()
         const void*         pempty  = query.getColumn(5); // operator void*()
+        const std::string_view svempty = query.getColumn(5); // operator std::string_view()
         EXPECT_EQ(1,            id1);
         EXPECT_EQ(1,            id2);
         EXPECT_EQ(1,            id3);
+        EXPECT_EQ(1,            id4);
+        EXPECT_EQ(1,            id5);
+        EXPECT_EQ(1,            id6);
+        EXPECT_EQ(1,            id7);
         EXPECT_EQ(1U,           uint1);
         EXPECT_EQ(1U,           uint2);
         EXPECT_EQ(1U,           uint3);
         EXPECT_EQ(1U,           uint4);
         EXPECT_STREQ("first",   ptxt);
         EXPECT_EQ("first",      msg);
+        EXPECT_EQ("first",      sv);
         EXPECT_EQ(-123,         integer);
-        EXPECT_EQ(0.123,        real);
+        EXPECT_DOUBLE_EQ(0.123, real);
         EXPECT_EQ(0,            memcmp("bl\0b", pblob, size));
-#if !defined(_MSC_VER) || _MSC_VER >= 1900
         EXPECT_EQ((size_t)size, sblob.size());
         EXPECT_EQ(0,            memcmp("bl\0b", &sblob[0], size));
-#endif
+        EXPECT_EQ(0,            memcmp("bl\0b", svblob.data(), size));
         EXPECT_EQ(NULL,         pempty);
+        EXPECT_EQ("",           svempty);
     }
+
+    query.reset();
+    query.executeStep();
 
     // validates every variant of explicit getters
     {
         int64_t             id      = query.getColumn(0).getInt64();
         const unsigned int  uint1   = query.getColumn(0).getUInt();
         const uint32_t      uint2   = query.getColumn(0).getUInt();
+        const std::string_view sv   = query.getColumn(1).getStringView();
+        const std::string   msg1    = query.getColumn(1).getString();
         const char*         ptxt    = query.getColumn(1).getText();
-        const std::string   msg1    = query.getColumn(1).getText();
-        const std::string   msg2    = query.getColumn(1).getString();
+        const std::string   msg2    = query.getColumn(1).getText();
         const int           integer = query.getColumn(2).getInt();
         const double        real    = query.getColumn(3).getDouble();
         const void*         pblob   = query.getColumn(4).getBlob();
         const std::string   sblob   = query.getColumn(4).getString();
+        const std::string_view svblob = query.getColumn(4).getStringView();
+        const std::string_view svempty = query.getColumn(5).getStringView();
         EXPECT_EQ(1,            id);
         EXPECT_EQ(1U,           uint1);
         EXPECT_EQ(1U,           uint2);
         EXPECT_STREQ("first",   ptxt);
+        EXPECT_EQ("first",      sv);
         EXPECT_EQ("first",      msg1);
         EXPECT_EQ("first",      msg2);
         EXPECT_EQ(-123,         integer);
-        EXPECT_EQ(0.123,        real);
+        EXPECT_DOUBLE_EQ(0.123, real);
         EXPECT_EQ(0,            memcmp("bl\0b", pblob, 4));
         EXPECT_EQ(0,            memcmp("bl\0b", &sblob[0], 4));
+        EXPECT_EQ(0,            memcmp("bl\0b", svblob.data(), 4));
+        EXPECT_EQ("",           svempty);
     }
 
     // Validate getBytes(), getType(), isInteger(), isNull()...
@@ -129,7 +182,7 @@ TEST(Column, basis)
     EXPECT_EQ(false,            query.getColumn(0).isText());
     EXPECT_EQ(false,            query.getColumn(0).isBlob());
     EXPECT_EQ(false,            query.getColumn(0).isNull());
-    EXPECT_STREQ("1",           query.getColumn(0).getText());  // convert to string
+    EXPECT_STREQ("1",           query.getColumn(0).getText());  // convert to TEXT via text func
     EXPECT_EQ(1,                query.getColumn(0).getBytes()); // size of the string "1" without the null terminator
     EXPECT_EQ(SQLite::TEXT,     query.getColumn(1).getType());
     EXPECT_EQ(false,            query.getColumn(1).isInteger());
@@ -137,7 +190,7 @@ TEST(Column, basis)
     EXPECT_EQ(true,             query.getColumn(1).isText());
     EXPECT_EQ(false,            query.getColumn(1).isBlob());
     EXPECT_EQ(false,            query.getColumn(1).isNull());
-    EXPECT_STREQ("first",       query.getColumn(1).getText());  // convert to string
+    EXPECT_STREQ("first",       query.getColumn(1).getString().c_str());  // convert to TEXT via string func
     EXPECT_EQ(5,                query.getColumn(1).getBytes()); // size of the string "first"
     EXPECT_EQ(SQLite::INTEGER,  query.getColumn(2).getType());
     EXPECT_EQ(true,             query.getColumn(2).isInteger());
@@ -161,7 +214,6 @@ TEST(Column, basis)
     EXPECT_EQ(false,            query.getColumn(4).isText());
     EXPECT_EQ(true,             query.getColumn(4).isBlob());
     EXPECT_EQ(false,            query.getColumn(4).isNull());
-    EXPECT_STREQ("bl\0b",       query.getColumn(4).getText());  // convert to string
     EXPECT_EQ(4,                query.getColumn(4).getBytes()); // size of the blob "bl\0b" with the null char
     EXPECT_EQ(SQLite::Null,     query.getColumn(5).getType());
     EXPECT_EQ(false,            query.getColumn(5).isInteger());
@@ -172,6 +224,9 @@ TEST(Column, basis)
     EXPECT_STREQ("",            query.getColumn(5).getText());  // convert to string
     EXPECT_EQ(0,                query.getColumn(5).getBytes()); // size of the string "" without the null terminator
 
+    query.reset();
+    query.executeStep();
+
     // Use intermediate Column objects (this is not the recommended way to use the API)
     {
         const SQLite::Column id = query.getColumn(0);
@@ -181,8 +236,71 @@ TEST(Column, basis)
         const SQLite::Column integer = query.getColumn(2);
         EXPECT_EQ(-123, integer.getInt());
         const SQLite::Column dbl = query.getColumn(3);
-        EXPECT_EQ(0.123, dbl.getDouble());
+        EXPECT_DOUBLE_EQ(0.123, dbl.getDouble());
     }
+}
+
+TEST(Column, basis)
+{
+    test_column_basis(false);
+}
+
+TEST(Column, basis16)
+{
+    test_column_basis(true);
+}
+
+
+// Verify the actual SQLite storage types and byte lengths, including in UTF-16 databases.
+static void test_string_view_values(bool utf16)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    if (utf16)
+    {
+        EXPECT_EQ(0, db.exec("PRAGMA encoding = 'UTF-16'"));
+    }
+
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (plain TEXT, embedded TEXT, data BLOB, nullval BLOB,"
+                         " emptyblob BLOB, emptytext TEXT)"));
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (?, ?, ?, NULL, x'', '')");
+    const std::string utf8 = "caf\xC3\xA9";
+    const char embedded[] = {'A', '\0', 'B'};
+
+    insert.bind(1, std::string_view(utf8));
+    insert.bind(2, std::string_view(embedded, sizeof(embedded)));
+    insert.bind(3, embedded, static_cast<int>(sizeof(embedded))); // Bind as a real BLOB.
+    EXPECT_EQ(1, insert.exec());
+
+    SQLite::Statement query(db, "SELECT * FROM test");
+    ASSERT_TRUE(query.executeStep());
+
+    EXPECT_TRUE(query.getColumn(0).isText());
+    EXPECT_EQ(utf8, query.getColumn(0).getStringView());
+
+    EXPECT_TRUE(query.getColumn(1).isText());
+    EXPECT_EQ(std::string_view(embedded, sizeof(embedded)), query.getColumn(1).getStringView());
+
+    EXPECT_TRUE(query.getColumn(2).isBlob());
+    EXPECT_EQ(std::string_view(embedded, sizeof(embedded)), query.getColumn(2).getStringView());
+
+    EXPECT_TRUE(query.getColumn(3).isNull());
+    EXPECT_TRUE(query.getColumn(3).getStringView().empty());
+
+    EXPECT_TRUE(query.getColumn(4).isBlob());
+    EXPECT_TRUE(query.getColumn(4).getStringView().empty());
+
+    EXPECT_TRUE(query.getColumn(5).isText());
+    EXPECT_TRUE(query.getColumn(5).getStringView().empty());
+}
+
+TEST(Column, stringViewValues)
+{
+    test_string_view_values(false);
+}
+
+TEST(Column, stringViewValues16)
+{
+    test_string_view_values(true);
 }
 
 TEST(Column, getName)
@@ -190,7 +308,7 @@ TEST(Column, getName)
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, msg TEXT)"));
-    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, \"first\")"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, 'first')"));
 
     // Compile a SQL query, using the "id" column name as-is, but aliasing the "msg" column with new name "value"
     SQLite::Statement   query(db, "SELECT id, msg as value FROM test");
@@ -212,6 +330,24 @@ TEST(Column, getName)
     EXPECT_EQ("msg",    oname1);
 #endif
 }
+
+#ifdef SQLITE_ENABLE_COLUMN_METADATA
+TEST(Column, getTableName)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    db.exec("CREATE TABLE source (id INTEGER)");
+    db.exec("INSERT INTO source VALUES (1)");
+    SQLite::Statement query(db, "SELECT id AS item, id + 1 FROM source AS s");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_STREQ("source", query.getColumn(0).getTableName());
+    EXPECT_EQ(nullptr, query.getColumn(1).getTableName());
+
+    // A Column shares ownership of the prepared statement, including its metadata.
+    const SQLite::Column retained = db.execAndGet("SELECT id FROM source");
+    EXPECT_STREQ("source", retained.getTableName());
+    EXPECT_EQ(1, retained.getInt());
+}
+#endif
 
 TEST(Column, stream)
 {
@@ -238,12 +374,93 @@ TEST(Column, stream)
     EXPECT_EQ(content, str);
 }
 
+// COL-01 probe: try to break operator<< with multibyte UTF-8 TEXT.
+// Bytes are written with \x escapes so the test does not depend on the source file encoding.
+TEST(Column, streamUtf8Text)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (msg TEXT)"));
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (?)");
+
+    const std::string utf8 =
+        "caf\xC3\xA9"               // cafe with e-acute (U+00E9)
+        " \xE4\xB8\x96\xE7\x95\x8C"  // CJK "world" (U+4E16 U+754C)
+        " \xF0\x9F\x98\x80";         // grinning face emoji (U+1F600)
+
+    insert.bind(1, utf8);
+    EXPECT_EQ(1, insert.exec());
+
+    SQLite::Statement query(db, "SELECT msg FROM test");
+    ASSERT_TRUE(query.executeStep());
+
+    std::stringstream ss;
+    ss << query.getColumn(0);
+    const std::string streamed = ss.str();
+
+    // operator<< must reproduce the exact UTF-8 byte sequence and agree with getString()
+    EXPECT_EQ(streamed.size(), utf8.size());
+    EXPECT_EQ(streamed, utf8);
+    EXPECT_EQ(streamed, query.getColumn(0).getString());
+}
+
+// COL-01 probe: multibyte UTF-8 TEXT on both sides of an embedded NUL byte.
+TEST(Column, streamUtf8EmbeddedNul)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (msg TEXT)"));
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (?)");
+
+    const char raw[] = "caf\xC3\xA9\x00\xF0\x9F\x98\x80"; // "cafe" + NUL + emoji
+    const std::string utf8(raw, sizeof(raw) - 1);         // keep the embedded NUL, drop the literal terminator
+
+    insert.bind(1, utf8);
+    EXPECT_EQ(1, insert.exec());
+
+    SQLite::Statement query(db, "SELECT msg FROM test");
+    ASSERT_TRUE(query.executeStep());
+
+    std::stringstream ss;
+    ss << query.getColumn(0);
+    const std::string streamed = ss.str();
+
+    EXPECT_EQ(streamed.size(), utf8.size());
+    EXPECT_EQ(streamed, utf8);
+}
+
+// COL-01 probe: the same UTF-8 bytes stored as a BLOB (the case the review flags).
+TEST(Column, streamUtf8Blob)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (data BLOB)"));
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (?)");
+
+    const std::string utf8 =
+        "caf\xC3\xA9"
+        " \xE4\xB8\x96\xE7\x95\x8C"
+        " \xF0\x9F\x98\x80";
+
+    insert.bind(1, utf8.data(), static_cast<int>(utf8.size())); // store as a BLOB
+    EXPECT_EQ(1, insert.exec());
+
+    SQLite::Statement query(db, "SELECT data FROM test");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_TRUE(query.getColumn(0).isBlob());
+
+    std::stringstream ss;
+    ss << query.getColumn(0);
+    const std::string streamed = ss.str();
+
+    EXPECT_EQ(streamed.size(), utf8.size());
+    EXPECT_EQ(streamed, utf8);
+    EXPECT_EQ(streamed, query.getColumn(0).getString());
+}
+
 TEST(Column, shared_ptr)
 {
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
     EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, msg TEXT)"));
-    EXPECT_EQ(1, db.exec(R"(INSERT INTO test VALUES (42, "fortytwo"))"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (42, 'fortytwo')"));
     const char* query_str = "SELECT id, msg FROM test";
 
     std::unique_ptr<SQLite::Statement> query{ new SQLite::Statement(db, query_str) };
@@ -272,4 +489,11 @@ TEST(Column, shared_ptr)
     // bool isInt = column0.isInteger();
 
     EXPECT_STREQ("id", column0.getName());
+}
+
+TEST(Column, invalidStatementPtr)
+{
+    // Constructing a Column from a null (destroyed) statement pointer must throw
+    const SQLite::Statement::TStatementPtr nullStmtPtr;
+    EXPECT_THROW(SQLite::Column column(nullStmtPtr, 0), SQLite::Exception);
 }

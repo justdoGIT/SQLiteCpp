@@ -3,7 +3,7 @@
  * @ingroup tests
  * @brief   Test of a SQLite Transaction.
  *
- * Copyright (c) 2012-2020 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -85,5 +85,12 @@ TEST(Exception, constructor)
         EXPECT_EQ(ex.getErrorCode(), 2);
         EXPECT_EQ(ex.getExtendedErrorCode(), -1);
         EXPECT_STREQ(ex.getErrorStr(), "unknown error");
+    }
+    {
+        // A null message must not be forwarded as-is to std::runtime_error (would be UB)
+        const SQLite::Exception ex(static_cast<const char*>(nullptr), 1);
+        EXPECT_STREQ(ex.what(), "");
+        EXPECT_EQ(ex.getErrorCode(), 1);
+        EXPECT_EQ(ex.getExtendedErrorCode(), -1);
     }
 }

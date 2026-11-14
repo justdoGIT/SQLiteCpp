@@ -4,7 +4,7 @@
  *
  *  Demonstrates how-to use the SQLite++ wrapper
  *
- * Copyright (c) 2012-2020 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -21,7 +21,7 @@
 namespace SQLite
 {
 /// definition of the assertion handler enabled when SQLITECPP_ENABLE_ASSERT_HANDLER is defined in the project (CMakeList.txt)
-void assertion_failed(const char* apFile, const long apLine, const char* apFunc, const char* apExpr, const char* apMsg)
+void assertion_failed(const char* apFile, const int apLine, const char* apFunc, const char* apExpr, const char* apMsg)
 {
     // Print a message to the standard error output stream, and abort the program.
     std::cerr << apFile << ":" << apLine << ":" << " error: assertion failed (" << apExpr << ") in " << apFunc << "() with message \"" << apMsg << "\"\n";

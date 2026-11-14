@@ -4,7 +4,7 @@
  * @brief   Convenience function for Statement::bind(...)
  *
  * Copyright (c) 2016 Paul Dreik (github@pauldreik.se)
- * Copyright (c) 2016-2021 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2016-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  * Copyright (c) 2019 Maximilian Bachmann (contact@maxbachmann.de)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
@@ -14,9 +14,7 @@
 
 #include <SQLiteCpp/Statement.h>
 
-#if (__cplusplus >= 201402L) || ( defined(_MSC_VER) && (_MSC_VER >= 1900) ) // c++14: Visual Studio 2015
 #include <tuple>
-#endif // c++14
 
 /// @cond
 #include <utility>
@@ -30,8 +28,6 @@ namespace SQLite
  * \brief Convenience function for calling Statement::bind(...) once for each argument given.
  *
  * This takes care of incrementing the index between each calls to bind.
- *
- * This feature requires a c++11 capable compiler.
  *
  * \code{.cpp}
  * SQLite::Statement stm("SELECT * FROM MyTable WHERE colA>? && colB=? && colC<?");
@@ -48,18 +44,13 @@ template<class ...Args>
 void bind(SQLite::Statement& query, const Args& ... args)
 {
     int pos = 0;
-    (void)std::initializer_list<int>{
-        ((void)query.bind(++pos, std::forward<decltype(args)>(args)), 0)...
-    };
+    // Keep the pack expansion on a single line so GCov attributes the (tested) bind calls correctly
+    (void)std::initializer_list<int>{ ((void)query.bind(++pos, std::forward<decltype(args)>(args)), 0)... };
 }
-
-#if (__cplusplus >= 201402L) || ( defined(_MSC_VER) && (_MSC_VER >= 1900) ) // c++14: Visual Studio 2015
 
 /**
  * \brief Convenience function for calling Statement::bind(...) once for each parameter of a tuple,
  * by forwarding them to the variadic template
- *
- * This feature requires a c++14 capable compiler.
  *
  * \code{.cpp}
  * SQLite::Statement stm("SELECT * FROM MyTable WHERE colA>? && colB=? && colC<?");
@@ -83,8 +74,6 @@ void bind(SQLite::Statement& query, const std::tuple<Types...> &tuple)
  * by forwarding them to the variadic template. This function is just needed to convert the tuples
  * to parameter packs
  *
- * This feature requires a c++14 capable compiler.
- * 
  * @param query     statement
  * @param tuple     tuple with values to bind
  */
@@ -93,6 +82,5 @@ void bind(SQLite::Statement& query, const std::tuple<Types...> &tuple, std::inde
 {
     bind(query, std::get<Indices>(tuple)...);
 }
-#endif // c++14
 
 } // namespace SQLite

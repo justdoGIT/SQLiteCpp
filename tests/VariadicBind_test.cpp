@@ -4,7 +4,7 @@
  * @brief   Test of variadic bind
  *
  * Copyright (c) 2016 Paul Dreik (github@pauldreik.se)
- * Copyright (c) 2016-2020 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2016-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  * Copyright (c) 2019 Maximilian Bachmann (github@maxbachmann)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
@@ -19,7 +19,6 @@
 
 #include <cstdio>
 
-#if (__cplusplus >= 201103L) || ( defined(_MSC_VER) && (_MSC_VER >= 1800) ) // c++11: Visual Studio 2013
 TEST(VariadicBind, invalid)
 {
     // Create a new database
@@ -69,7 +68,6 @@ TEST(VariadicBind, invalid)
         EXPECT_EQ(std::make_pair(2,std::string{"two"}), results.at(1));
         EXPECT_EQ(std::make_pair(3,std::string{"three"}), results.at(2));
     }
-    #if (__cplusplus >= 201402L) || ( defined(_MSC_VER) && (_MSC_VER >= 1900) ) // c++14: Visual Studio 2015
     {
         SQLite::Statement query(db, "INSERT INTO test2 VALUES (?, ?)");
 
@@ -104,6 +102,4 @@ TEST(VariadicBind, invalid)
         EXPECT_EQ(std::make_pair(2,std::string{"two"}), results.at(1));
         EXPECT_EQ(std::make_pair(3,std::string{"three"}), results.at(2));
     }
-    #endif // c++14
 }
-#endif // c++11

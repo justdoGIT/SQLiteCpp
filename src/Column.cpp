@@ -3,7 +3,7 @@
  * @ingroup SQLiteCpp
  * @brief   Encapsulation of a Column in a row of the result pointed by the prepared SQLite::Statement.
  *
- * Copyright (c) 2012-2021 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -14,15 +14,14 @@
 
 #include <iostream>
 
-
 namespace SQLite
 {
 
-const int INTEGER   = SQLITE_INTEGER;
-const int FLOAT     = SQLITE_FLOAT;
-const int TEXT      = SQLITE_TEXT;
-const int BLOB      = SQLITE_BLOB;
-const int Null      = SQLITE_NULL;
+static_assert(INTEGER == SQLITE_INTEGER, "SQLite::INTEGER must match SQLITE_INTEGER");
+static_assert(FLOAT == SQLITE_FLOAT, "SQLite::FLOAT must match SQLITE_FLOAT");
+static_assert(TEXT == SQLITE_TEXT, "SQLite::TEXT must match SQLITE_TEXT");
+static_assert(BLOB == SQLITE_BLOB, "SQLite::BLOB must match SQLITE_BLOB");
+static_assert(Null == SQLITE_NULL, "SQLite::Null must match SQLITE_NULL");
 
 
 // Encapsulation of a Column in a row of the result pointed by the prepared Statement.
@@ -47,6 +46,12 @@ const char* Column::getName() const noexcept
 const char* Column::getOriginName() const noexcept
 {
     return sqlite3_column_origin_name(mStmtPtr.get(), mIndex);
+}
+
+// Return the original table name for this result column.
+const char* Column::getTableName() const noexcept
+{
+    return sqlite3_column_table_name(mStmtPtr.get(), mIndex);
 }
 #endif
 
@@ -78,7 +83,7 @@ double Column::getDouble() const noexcept
 const char* Column::getText(const char* apDefaultValue /* = "" */) const noexcept
 {
     auto pText = reinterpret_cast<const char*>(sqlite3_column_text(mStmtPtr.get(), mIndex));
-    return (pText?pText:apDefaultValue);
+    return (pText ? pText : apDefaultValue);
 }
 
 // Return a pointer to the blob value (*not* NULL terminated) of the column specified by its index starting at 0
@@ -87,16 +92,25 @@ const void* Column::getBlob() const noexcept
     return sqlite3_column_blob(mStmtPtr.get(), mIndex);
 }
 
-// Return a std::string to a TEXT or BLOB column
-std::string Column::getString() const
+// Return a std::string_view to a TEXT or BLOB column
+std::string_view Column::getStringView() const
 {
-    // Note: using sqlite3_column_blob and not sqlite3_column_text
+    // Note: using sqlite3_column_blob and not sqlite3_column_text:
     // - no need for sqlite3_column_text to add a \0 on the end, as we're getting the bytes length directly
+    // - however, we first call sqlite3_column_bytes() to convert TEXT values to UTF-8. It's a noop on a BLOB
+    //   or a TEXT value with the correct encoding (UTF-8). Otherwise it'll do a conversion to TEXT (UTF-8).
+    (void)sqlite3_column_bytes(mStmtPtr.get(), mIndex);
     auto data = static_cast<const char *>(sqlite3_column_blob(mStmtPtr.get(), mIndex));
 
     // SQLite docs: "The safest policy is to invoke… sqlite3_column_blob() followed by sqlite3_column_bytes()"
-    // Note: std::string is ok to pass nullptr as first arg, if length is 0
-    return std::string(data, sqlite3_column_bytes(mStmtPtr.get(), mIndex));
+    // Note: std::string_view is ok to pass nullptr as first arg, if length is 0
+    return std::string_view(data, sqlite3_column_bytes(mStmtPtr.get(), mIndex));    
+}
+
+// Return a std::string to a TEXT or BLOB column
+std::string Column::getString() const
+{
+    return std::string(getStringView());
 }
 
 // Return the type of the value of the column
@@ -114,9 +128,9 @@ int Column::getBytes() const noexcept
 // Standard std::ostream inserter
 std::ostream& operator<<(std::ostream& aStream, const Column& aColumn)
 {
-    aStream.write(aColumn.getText(), aColumn.getBytes());
+    const std::string value = aColumn.getString();
+    aStream.write(value.data(), static_cast<std::streamsize>(value.size()));
     return aStream;
 }
-
 
 }  // namespace SQLite

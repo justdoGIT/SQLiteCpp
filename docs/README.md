@@ -3,14 +3,15 @@ SQLiteC++
 
 [![release](https://img.shields.io/github/release/SRombauts/SQLiteCpp.svg)](https://github.com/SRombauts/SQLiteCpp/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/SRombauts/SQLiteCpp/blob/master/LICENSE.txt)
-[![Travis CI Linux Build Status](https://travis-ci.org/SRombauts/SQLiteCpp.svg?branch=master)](https://travis-ci.org/SRombauts/SQLiteCpp "Travis CI Linux Build Status")
-[![AppVeyor Windows Build status](https://ci.appveyor.com/api/projects/status/github/SRombauts/SQLiteCpp?svg=true)](https://ci.appveyor.com/project/SbastienRombauts/SQLiteCpp "AppVeyor Windows Build status")
-[![GitHub Actions Build status](https://github.com/SRombauts/SQLiteCpp/workflows/build/badge.svg)](https://github.com/SRombauts/SQLiteCpp/actions "GitHhub Actions Build status")
-[![Coveralls](https://img.shields.io/coveralls/SRombauts/SQLiteCpp.svg)](https://coveralls.io/github/SRombauts/SQLiteCpp "Coveralls test coverage")
+[![CMake](https://github.com/SRombauts/SQLiteCpp/actions/workflows/cmake.yml/badge.svg?branch=master)](https://github.com/SRombauts/SQLiteCpp/actions/workflows/cmake.yml "CMake build status")
+[![Meson](https://github.com/SRombauts/SQLiteCpp/actions/workflows/meson.yml/badge.svg?branch=master)](https://github.com/SRombauts/SQLiteCpp/actions/workflows/meson.yml "Meson build status")
+[![Quality](https://github.com/SRombauts/SQLiteCpp/actions/workflows/quality.yml/badge.svg?branch=master)](https://github.com/SRombauts/SQLiteCpp/actions/workflows/quality.yml "Quality checks")
+[![CodeQL](https://github.com/SRombauts/SQLiteCpp/actions/workflows/codeql.yml/badge.svg?branch=master)](https://github.com/SRombauts/SQLiteCpp/actions/workflows/codeql.yml "CodeQL analysis")
+[![Coveralls](https://img.shields.io/coveralls/github/SRombauts/SQLiteCpp/master.svg)](https://coveralls.io/github/SRombauts/SQLiteCpp "Coveralls test coverage")
 [![Coverity](https://img.shields.io/coverity/scan/14508.svg)](https://scan.coverity.com/projects/srombauts-sqlitecpp "Coverity Scan Build Status")
 [![Join the chat at https://gitter.im/SRombauts/SQLiteCpp](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/SRombauts/SQLiteCpp?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-SQLiteC++ (SQLiteCpp) is a smart and easy to use C++ SQLite3 wrapper.
+SQLiteC++ (SQLiteCpp) is a lean and easy to use C++ SQLite3 wrapper.
 
 <!--Keywords: sqlite, sqlite3, C, library, wrapper C++-->
 <meta name="keywords" content="sqlite, sqlite3, C, library, wrapper C++">
@@ -22,7 +23,7 @@ with a few intuitive and well documented C++ classes.
 
 ### License:
 
-Copyright (c) 2012-2021 Sébastien Rombauts (sebastien.rombauts@gmail.com)
+Copyright (c) 2012-2026 Sébastien Rombauts (sebastien.rombauts@gmail.com)
 <a href="https://www.paypal.me/SRombauts" title="Pay Me a Beer! Donate with PayPal :)"><img src="https://www.paypalobjects.com/webstatic/paypalme/images/pp_logo_small.png" width="118"></a>
 
 Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
@@ -46,10 +47,12 @@ All of the code and documentation in SQLite has been dedicated to the public dom
 ### The goals of SQLiteC++ are:
 
 - to offer the best of the existing simple C++ SQLite wrappers
-- to be elegantly written with good C++11 design, STL, exceptions and RAII idiom
-- to keep dependencies to a minimum (C++11 STL and SQLite3)
+- to be elegantly written with modern C++17 design, STL, exceptions and RAII idiom
+- to keep dependencies to a minimum (C++17 STL and SQLite3)
 - to be portable
 - to be light and fast
+
+**C++17 baseline:** SQLiteCpp 4.x requires C++17. SQLiteCpp 3.4.x is the final release line supporting C++11; maintenance fixes for the 3.x series remain on the `sqlitecpp-3.4.x` branch.
 - to be thread-safe only as much as SQLite "Multi-thread" mode (see below)
 - to have a good unit test coverage
 - to use API names sticking with those of the SQLite library
@@ -66,28 +69,26 @@ and then is always valid until destroyed.
 
 ### Supported platforms:
 
-Now requires a C++11 compiler. Use branch [sqlitecpp-2.x](https://github.com/SRombauts/SQLiteCpp/tree/sqlitecpp-2.x) for latest pre-C++11 developments.
+SQLiteCpp 4.x requires a C++17 compiler. Use branch [sqlitecpp-3.4.x](https://github.com/SRombauts/SQLiteCpp/tree/sqlitecpp-3.4.x) for the final C++11-compatible release line.
 
-Developments and tests are done under the following OSs:
-- Ubuntu 14.04, 16.04 and 18.04 (Travis CI)
-- Windows 10, and Windows Server 2012 R2 & Windows Server 2016 (AppVeyor)
-- OS X 10.11 (Travis CI)
-- Github Actions
-- Valgrind memcheck tool
+The continuous integration builds and tests on:
 
-And the following IDEs/Compilers
-- GCC 4.8.4, 5.3.0 and 7.1.1 (C++11, C++14, C++17)
-- Clang 5
-- Xcode 8 & 9
-- Visual Studio Community 2019, 2017, and 2015 (AppVeyor)
+- Ubuntu 22.04 and 24.04, plus the current Ubuntu GitHub Actions runner
+- the current Windows GitHub Actions runner, plus Visual Studio 2022 Release builds for Win32/x86 with shared
+  and static libraries
+- the current macOS GitHub Actions runner
+
+The build matrices cover GCC, Clang, AppleClang, MinGW, and MSVC. The library requires C++17,
+and the CMake compatibility workflow also exercises C++20.
 
 ### Dependencies
 
-- a modern C++11 STL implementation with GCC, Clang, or Visual Studio 2015
+- CMake 3.16 or newer when using the CMake build
+- a C++17-capable compiler and standard library
 - exception support (the class Exception inherits from std::runtime_error)
 - the SQLite library (3.7.15 minimum from 2012-12-12) either by linking to it dynamically or statically (install the libsqlite3-dev package under Debian/Ubuntu/Mint Linux),
   or by adding its source file in your project code base (source code provided in src/sqlite3 for Windows),
-  with the SQLITE_ENABLE_COLUMN_METADATA macro defined (see http://www.sqlite.org/compile.html#enable_column_metadata).
+  with the `SQLITE_ENABLE_COLUMN_METADATA` macro defined (see http://www.sqlite.org/compile.html#enable_column_metadata).
 
 ## Getting started
 ### Installation
@@ -127,6 +128,21 @@ cd SQLiteCpp
 git submodule init
 git submodule update
 ```
+
+### Installing SQLiteCpp (vcpkg)
+
+Alternatively, you can build and install SQLiteCpp using [vcpkg](https://github.com/Microsoft/vcpkg/) dependency manager:
+
+```bash or powershell
+git clone https://github.com/Microsoft/vcpkg.git
+cd vcpkg
+./bootstrap-vcpkg.sh
+./vcpkg integrate install
+./vcpkg install sqlitecpp
+```
+
+The SQLiteCpp port in vcpkg is kept up to date by Microsoft team members and community contributors. If the version is out of date, please [create an issue or pull request](https://github.com/Microsoft/vcpkg) on the vcpkg repository.
+
 
 #### Using SQLiteCpp on a system-wide installation
 
@@ -189,23 +205,20 @@ it's that you lack the "sqlite3" library: install the libsqlite3-dev package.
 
 If you get a single linker error "Column.cpp: undefined reference to sqlite3_column_origin_name",
 it's that your "sqlite3" library was not compiled with
-the SQLITE_ENABLE_COLUMN_METADATA macro defined (see [http://www.sqlite.org/compile.html#enable_column_metadata](http://www.sqlite.org/compile.html#enable_column_metadata)).
-You can either recompile it yourself (seek help online) or you can comment out the following line in src/Column.h:
-
-```C++
-#define SQLITE_ENABLE_COLUMN_METADATA
-```
+the `SQLITE_ENABLE_COLUMN_METADATA` macro defined (see [http://www.sqlite.org/compile.html#enable_column_metadata](http://www.sqlite.org/compile.html#enable_column_metadata)).
+You can:
+ - either recompile the sqlite3 library provided by your distribution yourself (seek help online)
+ - or turn off the `option(SQLITE_ENABLE_COLUMN_METADATA "Enable Column::getColumnOriginName(). Require support from sqlite3 library." ON)` in [CMakeFiles.txt](CMakeFiles.txt) (or other build system scripts)
+ - or turn on the `option(SQLITECPP_INTERNAL_SQLITE "Add the internal SQLite3 source to the project." ON)` in [CMakeFiles.txt](CMakeFiles.txt)
 
 ### Continuous Integration
 
-This project is continuously tested under Ubuntu Linux with the gcc and clang compilers
-using the Travis CI community service with the above CMake building and testing procedure.
-It is also tested in the same way under Windows Server 2012 R2 with Visual Studio 2013 compiler
-using the AppVeyor continuous integration service.
+GitHub Actions builds and tests the CMake and Meson configurations on Linux, Windows, and macOS.
+Separate workflows run AddressSanitizer, UndefinedBehaviorSanitizer, cppcheck, CodeQL, coverage, and Coverity Scan.
+The CMake workflow also runs Visual Studio 2022 Release builds for Win32/x86 with shared and static libraries.
 
 Detailed results can be seen online:
- - [https://travis-ci.org/SRombauts/SQLiteCpp](https://travis-ci.org/SRombauts/SQLiteCpp)
- - [https://ci.appveyor.com/project/SbastienRombauts/SQLiteCpp](https://ci.appveyor.com/project/SbastienRombauts/SQLiteCpp)
+ - [GitHub Actions](https://github.com/SRombauts/SQLiteCpp/actions)
 
 ### Thread-safety
 
@@ -222,6 +235,17 @@ provided that no single database connection is used simultaneously in two or mor
 But SQLiteC++ does not support the fully thread-safe "Serialized" mode of SQLite,
 because of the way it shares the underlying SQLite precompiled statement
 in a custom shared pointer (See the inner class "Statement::Ptr").
+
+### Valgrind memcheck
+
+Run valgrind to search for memory leaks in your application, the SQLiteCpp wrapper, or the sqlite3 library.
+Execute the following command under Unix like OS (Linux, MacOS or WSL2/Ubuntu under Windows Subsystem for Linux):
+
+```Shell
+valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose build/SQLiteCpp_example1
+```
+
+or uncoment the line at the end of [build.sh](build.sh)
 
 ## Examples
 ### The first sample demonstrates how to query a database and get results: 
@@ -291,7 +315,7 @@ and by setting the flag SQLITECPP_ENABLE_ASSERT_HANDLER when compiling the lib.
 namespace SQLite
 {
 /// definition of the assertion handler enabled when SQLITECPP_ENABLE_ASSERT_HANDLER is defined in the project (CMakeList.txt)
-void assertion_failed(const char* apFile, const long apLine, const char* apFunc, const char* apExpr, const char* apMsg)
+void assertion_failed(const char* apFile, const int apLine, const char* apFunc, const char* apExpr, const char* apMsg)
 {
     // Print a message to the standard error output stream, and abort the program.
     std::cerr << apFile << ":" << apLine << ":" << " error: assertion failed (" << apExpr << ") in " << apFunc << "() with message \"" << apMsg << "\"\n";

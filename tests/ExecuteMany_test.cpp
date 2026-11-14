@@ -4,7 +4,7 @@
  * @brief   Test of variadic bind
  *
  * Copyright (c) 2019 Maximilian Bachmann (contact@maxbachmann.de)
- * Copyright (c) 2019-2020 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2019-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -18,7 +18,6 @@
 
 #include <cstdio>
 
-#if (__cplusplus >= 201402L) || ( defined(_MSC_VER) && (_MSC_VER >= 1900) ) // c++14: Visual Studio 2015
 TEST(ExecuteMany, invalid)
 {
     // Create a new database
@@ -51,4 +50,43 @@ TEST(ExecuteMany, invalid)
         EXPECT_EQ(std::make_pair(3,std::string{"three"}), results.at(2));
     }
 }
-#endif // c++14
+
+TEST(ExecuteMany, decreasingArity)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
+
+    EXPECT_EQ(0, db.exec("DROP TABLE IF EXISTS test"));
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)"));
+    EXPECT_TRUE(db.tableExists("test"));
+    {
+        // The first row binds both parameters, the second row binds only the id
+        // and leaves the value parameter unbound: it must be stored as NULL, not
+        // reuse the "first" value left over from the previous parameter set.
+        execute_many(db, "INSERT INTO test VALUES (?, ?)",
+            std::make_tuple(1, "first"),
+            std::make_tuple(2)
+        );
+    }
+    // make sure the stale binding did not leak into the second row
+    {
+        SQLite::Statement query(db, std::string{"SELECT id, value FROM test ORDER BY id"});
+        std::vector<std::pair<int, std::string> > results;
+        std::vector<bool> valueIsNull;
+        while (query.executeStep())
+        {
+            const int id = query.getColumn(0);
+            valueIsNull.push_back(query.getColumn(1).isNull());
+            std::string value = query.getColumn(1);
+            results.emplace_back( id, std::move(value) );
+        }
+        EXPECT_EQ(std::size_t(2), results.size());
+
+        EXPECT_EQ(std::make_pair(1,std::string{"first"}), results.at(0));
+        EXPECT_FALSE(valueIsNull.at(0));
+
+        // Without clearBindings() the second row would wrongly store "first"
+        EXPECT_EQ(2, results.at(1).first);
+        EXPECT_TRUE(valueIsNull.at(1));
+    }
+}

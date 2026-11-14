@@ -3,7 +3,7 @@
  * @ingroup tests
  * @brief   Test of a SQLiteCpp Statement.
  *
- * Copyright (c) 2012-2020 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -12,8 +12,11 @@
 #include <SQLiteCpp/Database.h>
 #include <SQLiteCpp/Statement.h>
 
-#include <cstdint>   // for int64_t
-#include <sqlite3.h> // for SQLITE_DONE
+#include <cstdint>     // for int64_t
+#include <iterator>    // for std::iterator_traits, std::input_iterator_tag
+#include <type_traits> // for std::is_same
+#include <utility>     // for std::move
+#include <sqlite3.h>   // for SQLITE_DONE
 
 #include <gtest/gtest.h>
 
@@ -87,7 +90,7 @@ TEST(Statement, invalid)
     EXPECT_THROW(query.exec(), SQLite::Exception); // exec() shall throw as it needs to be reseted
 
     // Add a first row
-    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, \"first\")"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, 'first')"));
     EXPECT_EQ(1, db.getLastInsertRowid());
     EXPECT_EQ(1, db.getTotalChanges());
 
@@ -97,8 +100,6 @@ TEST(Statement, invalid)
 
     EXPECT_THROW(query.exec(), SQLite::Exception); // exec() shall throw as it does not expect a result
 }
-
-#if __cplusplus >= 201103L || (defined(_MSC_VER) && _MSC_VER >= 1600)
 
 SQLite::Statement StatementBuilder(SQLite::Database& aDb, const char* apQuery)
 {
@@ -110,7 +111,7 @@ TEST(Statement, moveConstructor)
     // Create a new database
     SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
     EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)"));
-    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, \"first\")"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, 'first')"));
     EXPECT_EQ(1, db.getLastInsertRowid());
 
     SQLite::Statement query = StatementBuilder(db, "SELECT * FROM test");
@@ -138,9 +139,9 @@ TEST(Statement, moveConstructor)
     // Moved statements should throw
     EXPECT_THROW(query.getColumnIndex("value"), SQLite::Exception);
     EXPECT_THROW(query.getColumn(index), SQLite::Exception);
+    // Binding to a moved-from statement throws because it has no prepared statement anymore
+    EXPECT_THROW(query.bind(1, 1), SQLite::Exception);
 }
-
-#endif
 
 TEST(Statement, executeStep)
 {
@@ -153,7 +154,7 @@ TEST(Statement, executeStep)
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
 
     // Create a first row
-    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, \"first\", 123, 0.123)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, 'first', 123, 0.123)"));
     EXPECT_EQ(1, db.getLastInsertRowid());
 
     // Compile a SQL query
@@ -174,7 +175,7 @@ TEST(Statement, executeStep)
     EXPECT_EQ("first",  msg);
     EXPECT_EQ(123,      integer);
     EXPECT_EQ(123,      integer2);
-    EXPECT_EQ(0.123,    real);
+    EXPECT_DOUBLE_EQ(0.123, real);
 
     // Step one more time to discover there is nothing more
     query.executeStep();
@@ -185,13 +186,13 @@ TEST(Statement, executeStep)
     EXPECT_THROW(query.executeStep(), SQLite::Exception);
 
     // Try to insert a new row with the same PRIMARY KEY: "UNIQUE constraint failed: test.id"
-    SQLite::Statement insert(db, "INSERT INTO test VALUES (1, \"impossible\", 456, 0.456)");
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (1, 'impossible', 456, 0.456)");
     EXPECT_THROW(insert.executeStep(), SQLite::Exception);
     // in this case, reset() do throw again the same error
     EXPECT_THROW(insert.reset(), SQLite::Exception);
 
     // Try again to insert a new row with the same PRIMARY KEY (with an alternative method): "UNIQUE constraint failed: test.id"
-    SQLite::Statement insert2(db, "INSERT INTO test VALUES (1, \"impossible\", 456, 0.456)");
+    SQLite::Statement insert2(db, "INSERT INTO test VALUES (1, 'impossible', 456, 0.456)");
     EXPECT_THROW(insert2.exec(), SQLite::Exception);
 }
 
@@ -206,7 +207,7 @@ TEST(Statement, tryExecuteStep)
     EXPECT_EQ(SQLite::OK, db.getErrorCode());
 
     // Create a first row
-    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, \"first\", 123, 0.123)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, 'first', 123, 0.123)"));
     EXPECT_EQ(1, db.getLastInsertRowid());
 
     // Compile a SQL query
@@ -227,7 +228,7 @@ TEST(Statement, tryExecuteStep)
     EXPECT_EQ("first",  msg);
     EXPECT_EQ(123,      integer);
     EXPECT_EQ(123,      integer2);
-    EXPECT_EQ(0.123,    real);
+    EXPECT_DOUBLE_EQ(0.123, real);
 
     // Step one more time to discover there is nothing more
     EXPECT_EQ(query.tryExecuteStep(), SQLITE_DONE);
@@ -235,7 +236,7 @@ TEST(Statement, tryExecuteStep)
     EXPECT_TRUE (query.isDone()); // "done" is "the end"
 
     // Try to insert a new row with the same PRIMARY KEY: "UNIQUE constraint failed: test.id"
-    SQLite::Statement insert(db, "INSERT INTO test VALUES (1, \"impossible\", 456, 0.456)");
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (1, 'impossible', 456, 0.456)");
     EXPECT_EQ(insert.tryExecuteStep(), SQLITE_CONSTRAINT);
     // in this case, reset() do throw again the same error
     EXPECT_EQ(insert.tryReset(), SQLITE_CONSTRAINT);
@@ -327,7 +328,7 @@ TEST(Statement, bindings)
 
     // Fourth row with string/int64/float
     {
-        const std::string   fourth("fourth");
+        const std::string   fourth("fou\0rth", sizeof("fou\0rth") - 1);
         const int64_t       int64 = 12345678900000LL;
         const float         float32 = 0.234f;
         insert.bind(1, fourth);
@@ -341,9 +342,10 @@ TEST(Statement, bindings)
         EXPECT_TRUE (query.hasRow());
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(4,                query.getColumn(0).getInt64());
-        EXPECT_EQ(fourth,           query.getColumn(1).getText());
+        EXPECT_EQ(fourth,           query.getColumn(1).getString());
+        EXPECT_EQ(static_cast<int>(fourth.size()), query.getColumn(1).getBytes());
         EXPECT_EQ(12345678900000LL, query.getColumn(2).getInt64());
-        EXPECT_EQ(0.234f,           query.getColumn(3).getDouble());
+        EXPECT_FLOAT_EQ(0.234f,     (float)query.getColumn(3).getDouble());
     }
 
     // reset() without clearbindings()
@@ -353,7 +355,7 @@ TEST(Statement, bindings)
     {
         const char buffer[] = "binary";
         insert.bind(1, buffer, sizeof(buffer));
-        insert.bind(2);
+        insert.bind(2); // bind a NULL value
         EXPECT_EQ(1, insert.exec());
 
         // Check the result
@@ -364,7 +366,7 @@ TEST(Statement, bindings)
         EXPECT_STREQ(buffer,        query.getColumn(1).getText());
         EXPECT_TRUE (query.isColumnNull(2));
         EXPECT_EQ(0,                query.getColumn(2).getInt());
-        EXPECT_EQ(0.234f,           query.getColumn(3).getDouble());
+        EXPECT_FLOAT_EQ(0.234f,     (float)query.getColumn(3).getDouble());
     }
 
 
@@ -409,6 +411,110 @@ TEST(Statement, bindings)
     }
 }
 
+TEST(Statement, stringView)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE|SQLite::OPEN_CREATE);
+    EXPECT_EQ(SQLite::OK, db.getErrorCode());
+
+    // Create a new table
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY,"
+                         " txt1 TEXT, txt2 TEXT, bin1 BLOB, bin2 BLOB)"));
+    EXPECT_EQ(SQLite::OK, db.getErrorCode());
+
+    // Insertion with bindable parameters
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (NULL, ?, ?, ?, ?)");
+
+    // Compile a SQL query to check the results
+    SQLite::Statement query(db, "SELECT * FROM test ORDER BY id DESC LIMIT 1");
+    EXPECT_EQ(5, query.getColumnCount());
+
+    std::string_view sv1, sv2;
+    auto test_sv = [&](const bool noCopy)
+    {
+        // Insert row
+        if (noCopy)
+        {
+            insert.bindNoCopy(1, sv1);
+            insert.bindNoCopy(2, sv2);
+            insert.bindNoCopy(3, sv1);
+            insert.bindNoCopy(4, sv2);
+        }
+        else
+        {
+            insert.bind(1, sv1);
+            insert.bind(2, sv2);
+            insert.bind(3, sv1);
+            insert.bind(4, sv2);
+        }
+        EXPECT_EQ(1, insert.exec());
+        EXPECT_EQ(SQLITE_DONE, db.getErrorCode());
+
+        // Reset before each SELECT: a running cursor is not required to see new inserts.
+        // Note: memcmp returns 0 when n=0 (C11 -- 7.24.1.2)
+        query.reset();
+        ASSERT_TRUE(query.executeStep());
+        EXPECT_TRUE(   query.getColumn(1).isText());
+        EXPECT_EQ(sv1, query.getColumn(1).getStringView());
+        EXPECT_EQ(sv2, query.getColumn(2).getStringView());
+        EXPECT_TRUE(   query.getColumn(2).isText());
+        EXPECT_EQ(sv1, query.getColumn(1).getString());
+        EXPECT_EQ(sv2, query.getColumn(2).getString());
+        EXPECT_EQ(sv1.size(), query.getColumn(1).getBytes());
+        EXPECT_EQ(0, memcmp(sv1.data() == nullptr ? "" : sv1.data(),
+                            query.getColumn(1).getText(), sv1.size()));
+        EXPECT_EQ(sv2.size(), query.getColumn(2).getBytes());
+        EXPECT_EQ(0, memcmp(sv2.data() == nullptr ? "" : sv2.data(),
+                            query.getColumn(2).getText(), sv2.size()));
+        EXPECT_TRUE(   query.getColumn(3).isText());
+        EXPECT_EQ(sv1, query.getColumn(3).getStringView());
+        EXPECT_EQ(sv2, query.getColumn(4).getStringView());
+        EXPECT_TRUE(   query.getColumn(4).isText());
+        EXPECT_EQ(sv1, query.getColumn(3).getString());
+        EXPECT_EQ(sv2, query.getColumn(4).getString());
+        EXPECT_EQ(sv1.size(), query.getColumn(3).getBytes());
+        const void* pData = query.getColumn(3).getBlob();
+        EXPECT_EQ(0, memcmp(sv1.data() == nullptr ? "" : sv1.data(),
+                            pData == nullptr ? "" : pData, sv1.size()));
+        EXPECT_EQ(sv2.size(), query.getColumn(4).getBytes());
+        pData = query.getColumn(4).getBlob();
+        EXPECT_EQ(0, memcmp(sv2.data() == nullptr ? "" : sv2.data(),
+                            pData == nullptr ? "" : pData, sv2.size()));
+    };
+
+    // Non-empty
+    const char* text = "123\0test";
+    sv1 = std::string_view(text, 8);
+    sv2 = "abcd";
+    test_sv(false);
+    insert.reset();
+    test_sv(true);
+    insert.reset();
+
+    // Empty
+    sv1 = std::string_view();
+    sv2 = "";
+    test_sv(false);
+    insert.reset();
+    test_sv(true);
+
+    // Test insert with named bindings
+    SQLite::Statement insert2(db, "INSERT INTO test VALUES (NULL, @txt1, @txt2, @bin1, @bin2)");
+    sv1 = "abc";
+    sv2 = "def";
+    insert2.bind("@txt1", sv1);
+    insert2.bind(std::string("@txt2"), sv2);
+    insert2.bindNoCopy("@bin1", sv1);
+    insert2.bindNoCopy(std::string("@bin2"), sv2);
+    EXPECT_EQ(1, insert2.exec());
+    query.reset();
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_TRUE(sv1 == query.getColumn(1).getStringView());
+    EXPECT_TRUE(sv2 == query.getColumn(2).getStringView());
+    EXPECT_TRUE(sv1 == query.getColumn(3).getStringView());
+    EXPECT_TRUE(sv2 == query.getColumn(4).getStringView());
+}
+
 TEST(Statement, bindNoCopy)
 {
     // Create a new database
@@ -430,7 +536,7 @@ TEST(Statement, bindNoCopy)
     // Insert one row with all variants of bindNoCopy()
     {
         const char*         txt1   = "first";
-        const std::string   txt2   = "sec\0nd";
+        const std::string   txt2("sec\0nd", sizeof("sec\0nd") - 1);
         const char          blob[] = {'b','l','\0','b'};
         insert.bindNoCopy(1, txt1);
         insert.bindNoCopy(2, txt2);
@@ -444,9 +550,45 @@ TEST(Statement, bindNoCopy)
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(1, query.getColumn(0).getInt64());
         EXPECT_STREQ(txt1, query.getColumn(1).getText());
-        EXPECT_EQ(0, memcmp(&txt2[0], &query.getColumn(2).getString()[0], txt2.size()));
+        EXPECT_EQ(txt2, query.getColumn(2).getString());
+        EXPECT_EQ(static_cast<int>(txt2.size()), query.getColumn(2).getBytes());
         EXPECT_EQ(0, memcmp(blob, &query.getColumn(3).getString()[0], sizeof(blob)));
     }
+}
+
+TEST(Statement, bind64)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    SQLite::Statement query(db, "SELECT :copyIndex, :copyName, :copyStringName, :noCopyIndex, :noCopyName");
+
+    const char copyIndex[] = {'c', '\0', 'i'};
+    const char copyName[] = {'c', '\0', 'n'};
+    const char copyStringName[] = {'c', '\0', 's'};
+    const char noCopyIndex[] = {'n', '\0', 'i'};
+    const char noCopyName[] = {'n', '\0', 'n'};
+
+    query.bind64(1, copyIndex, static_cast<uint64_t>(sizeof(copyIndex)));
+    query.bind64(":copyName", copyName, static_cast<uint64_t>(sizeof(copyName)));
+    query.bind64(std::string(":copyStringName"), copyStringName, static_cast<uint64_t>(sizeof(copyStringName)));
+    query.bindNoCopy64(4, noCopyIndex, static_cast<uint64_t>(sizeof(noCopyIndex)));
+    query.bindNoCopy64(std::string(":noCopyName"), noCopyName, static_cast<uint64_t>(sizeof(noCopyName)));
+
+    ASSERT_TRUE(query.executeStep());
+    ASSERT_EQ(static_cast<int>(sizeof(copyIndex)), query.getColumn(0).getBytes());
+    ASSERT_EQ(static_cast<int>(sizeof(copyName)), query.getColumn(1).getBytes());
+    ASSERT_EQ(static_cast<int>(sizeof(copyStringName)), query.getColumn(2).getBytes());
+    ASSERT_EQ(static_cast<int>(sizeof(noCopyIndex)), query.getColumn(3).getBytes());
+    ASSERT_EQ(static_cast<int>(sizeof(noCopyName)), query.getColumn(4).getBytes());
+    EXPECT_EQ(0, memcmp(copyIndex, query.getColumn(0).getBlob(), sizeof(copyIndex)));
+    EXPECT_EQ(0, memcmp(copyName, query.getColumn(1).getBlob(), sizeof(copyName)));
+    EXPECT_EQ(0, memcmp(copyStringName, query.getColumn(2).getBlob(), sizeof(copyStringName)));
+    EXPECT_EQ(0, memcmp(noCopyIndex, query.getColumn(3).getBlob(), sizeof(noCopyIndex)));
+    EXPECT_EQ(0, memcmp(noCopyName, query.getColumn(4).getBlob(), sizeof(noCopyName)));
+
+    SQLite::Statement oversized(db, "SELECT ?");
+    const uint64_t oversizedLength = static_cast<uint64_t>(INT_MAX) + 1U;
+    EXPECT_THROW(oversized.bind64(1, copyIndex, oversizedLength), SQLite::Exception);
+    EXPECT_THROW(oversized.bindNoCopy64(1, noCopyIndex, oversizedLength), SQLite::Exception);
 }
 
 TEST(Statement, bindByName)
@@ -510,7 +652,7 @@ TEST(Statement, bindByName)
         EXPECT_EQ(second,           query.getColumn(1).getText());
         EXPECT_EQ(-123,             query.getColumn(2).getInt());
         EXPECT_EQ(12345678900000LL, query.getColumn(3).getInt64());
-        EXPECT_EQ(0.234f,           query.getColumn(4).getDouble());
+        EXPECT_FLOAT_EQ(0.234f,     (float)query.getColumn(4).getDouble());
     }
 
     // reset() without clearbindings()
@@ -520,7 +662,7 @@ TEST(Statement, bindByName)
     {
         const char buffer[] = "binary";
         insert.bind("@msg", buffer, sizeof(buffer));
-        insert.bind("@int");
+        insert.bind("@int"); // bind a NULL value
         EXPECT_EQ(1, insert.exec());
 
         // Check the result
@@ -531,7 +673,7 @@ TEST(Statement, bindByName)
         EXPECT_STREQ(buffer,        query.getColumn(1).getText());
         EXPECT_TRUE (query.isColumnNull(2));
         EXPECT_EQ(0,                query.getColumn(2).getInt());
-        EXPECT_EQ(0.234f,           query.getColumn(4).getDouble());
+        EXPECT_FLOAT_EQ(0.234f,     (float)query.getColumn(4).getDouble());
     }
 
     // reset() without clearbindings()
@@ -595,7 +737,7 @@ TEST(Statement, bindByNameString)
     EXPECT_EQ(1, query.getColumn(0).getInt64());
     EXPECT_STREQ("first", query.getColumn(1).getText());
     EXPECT_EQ(123, query.getColumn(2).getInt());
-    EXPECT_EQ(0.123, query.getColumn(3).getDouble());
+    EXPECT_DOUBLE_EQ(0.123, query.getColumn(3).getDouble());
     EXPECT_EQ(-123, query.getColumn(4).getInt());
 
     // reset() with clearbindings() and new bindings
@@ -622,7 +764,7 @@ TEST(Statement, bindByNameString)
         EXPECT_EQ(2, query.getColumn(0).getInt64());
         EXPECT_EQ(second, query.getColumn(1).getText());
         EXPECT_EQ(12345678900000LL, query.getColumn(2).getInt64());
-        EXPECT_EQ(0.234f, query.getColumn(3).getDouble());
+        EXPECT_FLOAT_EQ(0.234f, (float)query.getColumn(3).getDouble());
         EXPECT_EQ(-123, query.getColumn(4).getInt());
     }
 
@@ -633,7 +775,7 @@ TEST(Statement, bindByNameString)
     {
         const char buffer[] = "binary";
         insert.bind(amsg, buffer, sizeof(buffer));
-        insert.bind(aint);
+        insert.bind(aint); // bind a NULL value
         EXPECT_EQ(1, insert.exec());
 
         // Check the result
@@ -644,7 +786,7 @@ TEST(Statement, bindByNameString)
         EXPECT_STREQ(buffer, query.getColumn(1).getText());
         EXPECT_TRUE(query.isColumnNull(2));
         EXPECT_EQ(0, query.getColumn(2).getInt());
-        EXPECT_EQ(0.234f, query.getColumn(3).getDouble());
+        EXPECT_FLOAT_EQ(0.234f, (float)query.getColumn(3).getDouble());
     }
 
     // reset() without clearbindings()
@@ -690,7 +832,7 @@ TEST(Statement, bindNoCopyByName)
     // Insert one row with all variants of bindNoCopy()
     {
         const char*         txt1 = "first";
-        const std::string   txt2 = "sec\0nd";
+        const std::string   txt2("sec\0nd", sizeof("sec\0nd") - 1);
         const char          blob[] = { 'b','l','\0','b' };
         insert.bindNoCopy("@txt1", txt1);
         insert.bindNoCopy("@txt2", txt2);
@@ -705,7 +847,8 @@ TEST(Statement, bindNoCopyByName)
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(1, query.getColumn(0).getInt64());
         EXPECT_STREQ(txt1, query.getColumn(1).getText());
-        EXPECT_EQ(0, memcmp(&txt2[0], &query.getColumn(2).getString()[0], txt2.size()));
+        EXPECT_EQ(txt2, query.getColumn(2).getString());
+        EXPECT_EQ(static_cast<int>(txt2.size()), query.getColumn(2).getBytes());
         EXPECT_EQ(0, memcmp(blob, &query.getColumn(3).getString()[0], sizeof(blob)));
     }
 
@@ -718,7 +861,7 @@ TEST(Statement, bindNoCopyByName)
         const std::string   atxt2 = "@txt2";
         const std::string   ablob = "@blob";
         const char*         txt1 = "first2";
-        const std::string   txt2 = "sec\0nd2";
+        const std::string   txt2("sec\0nd2", sizeof("sec\0nd2") - 1);
         const char          blob[] = { 'b','l','\0','b','2' };
         insert.bindNoCopy(atxt1, txt1);
         insert.bindNoCopy(atxt2, txt2);
@@ -734,7 +877,8 @@ TEST(Statement, bindNoCopyByName)
         EXPECT_FALSE(query.isDone());
         EXPECT_EQ(2, query.getColumn(0).getInt64());
         EXPECT_STREQ(txt1, query.getColumn(1).getText());
-        EXPECT_EQ(0, memcmp(&txt2[0], &query.getColumn(2).getString()[0], txt2.size()));
+        EXPECT_EQ(txt2, query.getColumn(2).getString());
+        EXPECT_EQ(static_cast<int>(txt2.size()), query.getColumn(2).getBytes());
         EXPECT_EQ(0, memcmp(blob, &query.getColumn(3).getString()[0], sizeof(blob)));
     }
 }
@@ -750,10 +894,10 @@ TEST(Statement, isColumnNull)
     ASSERT_EQ(SQLite::OK, db.getErrorCode());
 
     // Create a first row with no null values, then other rows with each time a NULL value
-    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES (\"first\", 123,  0.123)"));
+    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES ('first', 123,  0.123)"));
     ASSERT_EQ(1, db.exec("INSERT INTO test VALUES (NULL,      123,  0.123)"));
-    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES (\"first\", NULL, 0.123)"));
-    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES (\"first\", 123,  NULL)"));
+    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES ('first', NULL, 0.123)"));
+    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES ('first', 123,  NULL)"));
 
     // Compile a SQL query
     const std::string select("SELECT * FROM test");
@@ -813,10 +957,10 @@ TEST(Statement, isColumnNullByName)
     ASSERT_EQ(SQLITE_OK, db.getErrorCode());
 
     // Create a first row with no null values, then other rows with each time a NULL value
-    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES (\"first\", 123,  0.123)"));
+    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES ('first', 123,  0.123)"));
     ASSERT_EQ(1, db.exec("INSERT INTO test VALUES (NULL,      123,  0.123)"));
-    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES (\"first\", NULL, 0.123)"));
-    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES (\"first\", 123,  NULL)"));
+    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES ('first', NULL, 0.123)"));
+    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES ('first', 123,  NULL)"));
 
     // Compile a SQL query
     const std::string select("SELECT * FROM test");
@@ -878,7 +1022,7 @@ TEST(Statement, getColumnByName)
     EXPECT_EQ(SQLite::OK, db.getExtendedErrorCode());
 
     // Create a first row
-    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, \"first\", 123, 0.123)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, 'first', 123, 0.123)"));
     EXPECT_EQ(1, db.getLastInsertRowid());
     EXPECT_EQ(1, db.getTotalChanges());
 
@@ -899,7 +1043,7 @@ TEST(Statement, getColumnByName)
     const double        real    = query.getColumn("double");
     EXPECT_EQ("first",  msg);
     EXPECT_EQ(123,      integer);
-    EXPECT_EQ(0.123,    real);
+    EXPECT_DOUBLE_EQ(0.123, real);
 }
 
 TEST(Statement, getName)
@@ -928,6 +1072,195 @@ TEST(Statement, getName)
 #endif
 }
 
+#ifdef SQLITE_ENABLE_COLUMN_METADATA
+TEST(Statement, getColumnTableName)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    db.exec("CREATE TABLE first (id INTEGER)");
+    db.exec("CREATE TABLE second (id INTEGER)");
+    SQLite::Statement query(db, "SELECT a.id AS item, b.id, a.id + b.id, 42 "
+                                "FROM first AS a JOIN second AS b ON a.id = b.id");
+
+    EXPECT_STREQ("first", query.getColumnTableName(0));
+    EXPECT_STREQ("second", query.getColumnTableName(1));
+    EXPECT_EQ(nullptr, query.getColumnTableName(2));
+    EXPECT_EQ(nullptr, query.getColumnTableName(3));
+    EXPECT_THROW(query.getColumnTableName(-1), SQLite::Exception);
+    EXPECT_THROW(query.getColumnTableName(4), SQLite::Exception);
+    EXPECT_FALSE(query.executeStep());
+    EXPECT_STREQ("first", query.getColumnTableName(0));
+
+    SQLite::Statement moved(std::move(query));
+    EXPECT_STREQ("second", moved.getColumnTableName(1));
+    EXPECT_THROW(query.getColumnTableName(0), SQLite::Exception);
+}
+
+TEST(Statement, getColumnTableNameAfterReprepare)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    db.exec("CREATE TABLE first (id INTEGER)");
+    db.exec("CREATE TABLE second (id INTEGER)");
+    db.exec("INSERT INTO first VALUES (1)");
+    db.exec("INSERT INTO second VALUES (2)");
+    db.exec("CREATE VIEW selected AS SELECT id FROM first");
+    SQLite::Statement query(db, "SELECT id FROM selected");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_STREQ("first", query.getColumnTableName(0));
+    EXPECT_STREQ("first", query.getColumn(0).getTableName());
+    ASSERT_FALSE(query.executeStep());
+    query.reset();
+
+    db.exec("DROP VIEW selected");
+    db.exec("CREATE VIEW selected AS SELECT id FROM second");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_EQ(2, query.getColumn(0).getInt());
+    EXPECT_STREQ("second", query.getColumnTableName(0));
+    EXPECT_STREQ("second", query.getColumn(0).getTableName());
+}
+#endif
+
+
+TEST(Statement, columnNamesAfterReprepare)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    db.exec("CREATE TABLE source (a INTEGER, b INTEGER)");
+    db.exec("INSERT INTO source VALUES (11, 22)");
+    db.exec("CREATE VIEW selected AS SELECT a AS first, b AS second FROM source");
+
+    SQLite::Statement query(db, "SELECT * FROM selected");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_EQ(2, query.getColumnCount());
+    EXPECT_EQ(0, query.getColumnIndex("first"));
+    EXPECT_EQ(1, query.getColumnIndex("second"));
+    EXPECT_EQ(11, query.getColumn("first").getInt());
+    EXPECT_EQ(22, query.getColumn("second").getInt());
+    query.reset();
+
+    // Same columns, different indexes: the cached name-to-index mapping must be replaced.
+    db.exec("DROP VIEW selected");
+    db.exec("CREATE VIEW selected AS SELECT b AS second, a AS first FROM source");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_EQ(2, query.getColumnCount());
+    EXPECT_EQ(1, query.getColumnIndex("first"));
+    EXPECT_EQ(0, query.getColumnIndex("second"));
+    EXPECT_EQ(11, query.getColumn("first").getInt());
+    EXPECT_EQ(22, query.getColumn("second").getInt());
+    query.reset();
+
+    // Same count, different names: obsolete names must no longer be accepted.
+    db.exec("DROP VIEW selected");
+    db.exec("CREATE VIEW selected AS SELECT b AS second, NULL AS added FROM source");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_EQ(2, query.getColumnCount());
+    EXPECT_THROW(query.getColumnIndex("first"), SQLite::Exception);
+    EXPECT_THROW(query.getColumn("first"), SQLite::Exception);
+    EXPECT_EQ(0, query.getColumnIndex("second"));
+    EXPECT_EQ(1, query.getColumnIndex("added"));
+    EXPECT_EQ(22, query.getColumn("second").getInt());
+    EXPECT_FALSE(query.isColumnNull("second"));
+    EXPECT_TRUE(query.isColumnNull("added"));
+}
+
+TEST(Statement, columnCountAfterReprepare)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    db.exec("CREATE TABLE source (a INTEGER, b INTEGER)");
+    db.exec("INSERT INTO source VALUES (11, 22)");
+    db.exec("CREATE VIEW selected AS SELECT a FROM source");
+
+    SQLite::Statement query(db, "SELECT * FROM selected");
+    ASSERT_EQ(SQLITE_ROW, query.tryExecuteStep());
+    EXPECT_EQ(1, query.getColumnCount());
+    EXPECT_EQ(11, query.getColumn(0).getInt());
+    query.reset();
+
+    db.exec("DROP VIEW selected");
+    db.exec("CREATE VIEW selected AS SELECT a, b, NULL AS extra FROM source");
+    ASSERT_EQ(SQLITE_ROW, query.tryExecuteStep());
+    EXPECT_EQ(3, query.getColumnCount());
+    EXPECT_STREQ("extra", query.getColumnName(2));
+    EXPECT_EQ(1, query.getColumnIndex("b"));
+    EXPECT_TRUE(query.isColumnNull(2));
+    EXPECT_THROW(query.getColumn(3), SQLite::Exception);
+    query.reset();
+
+    db.exec("DROP VIEW selected");
+    db.exec("CREATE VIEW selected AS SELECT b AS only FROM source");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_EQ(1, query.getColumnCount());
+    EXPECT_STREQ("only", query.getColumnName(0));
+    EXPECT_EQ(22, query.getColumn(0).getInt());
+    EXPECT_THROW(query.getColumn(1), SQLite::Exception);
+    EXPECT_THROW(query.isColumnNull(1), SQLite::Exception);
+    EXPECT_THROW(query.getColumnName(1), SQLite::Exception);
+    EXPECT_THROW(query.getColumnIndex("b"), SQLite::Exception);
+}
+
+TEST(Statement, columnMetadataAfterReprepareWithoutRows)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    db.exec("CREATE TABLE source (a INTEGER, b INTEGER)");
+    db.exec("INSERT INTO source VALUES (11, 22)");
+    db.exec("CREATE VIEW selected AS SELECT a FROM source");
+
+    SQLite::Statement query(db, "SELECT * FROM selected");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_EQ(0, query.getColumnIndex("a"));
+    query.reset();
+
+    db.exec("DROP VIEW selected");
+    db.exec("CREATE VIEW selected AS SELECT a, b FROM source WHERE 0");
+    EXPECT_EQ(SQLITE_DONE, query.tryExecuteStep());
+    EXPECT_TRUE(query.isDone());
+    EXPECT_FALSE(query.hasRow());
+    EXPECT_EQ(2, query.getColumnCount());
+    EXPECT_STREQ("b", query.getColumnName(1));
+    EXPECT_EQ(1, query.getColumnIndex("b"));
+    EXPECT_THROW(query.getColumn(1), SQLite::Exception);
+    query.reset();
+
+    db.exec("DROP VIEW selected");
+    db.exec("CREATE VIEW selected AS SELECT b AS only FROM source");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_EQ(1, query.getColumnCount());
+    EXPECT_EQ(22, query.getColumn("only").getInt());
+    EXPECT_THROW(query.getColumnIndex("b"), SQLite::Exception);
+}
+
+TEST(Statement, reprepareAfterMove)
+{
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    db.exec("CREATE TABLE source (a INTEGER, b INTEGER)");
+    db.exec("INSERT INTO source VALUES (11, 22)");
+    db.exec("CREATE VIEW selected AS SELECT a FROM source");
+
+    SQLite::Statement query(db, "SELECT * FROM selected");
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_EQ(0, query.getColumnIndex("a"));
+    query.reset();
+
+    SQLite::Statement moved(std::move(query));
+    EXPECT_EQ(SQLITE_MISUSE, query.tryExecuteStep());
+
+    db.exec("DROP VIEW selected");
+    db.exec("CREATE VIEW selected AS SELECT b AS only, a FROM source");
+    ASSERT_TRUE(moved.executeStep());
+    EXPECT_EQ(2, moved.getColumnCount());
+    EXPECT_EQ(22, moved.getColumn("only").getInt());
+    EXPECT_EQ(11, moved.getColumn("a").getInt());
+
+    // Move again after the reprepare counter has advanced, then reprepare once more.
+    moved.reset();
+    SQLite::Statement movedAgain(std::move(moved));
+    EXPECT_EQ(SQLITE_MISUSE, moved.tryExecuteStep());
+    db.exec("DROP VIEW selected");
+    db.exec("CREATE VIEW selected AS SELECT a FROM source");
+    ASSERT_TRUE(movedAgain.executeStep());
+    EXPECT_EQ(1, movedAgain.getColumnCount());
+    EXPECT_EQ(11, movedAgain.getColumn("a").getInt());
+    EXPECT_THROW(movedAgain.getColumnIndex("only"), SQLite::Exception);
+}
+
 TEST(Statement, getColumnDeclaredType)
 {
     // Create a new database
@@ -954,7 +1287,6 @@ TEST(Statement, getColumnDeclaredType)
     EXPECT_THROW(pragma.getColumnDeclaredType(0), SQLite::Exception);
 }
 
-#if __cplusplus >= 201402L || (defined(_MSC_VER) && _MSC_VER >= 1900)
 TEST(Statement, getColumns)
 {
     struct GetRowTestStruct
@@ -983,7 +1315,7 @@ TEST(Statement, getColumns)
     EXPECT_EQ(SQLite::OK, db.getExtendedErrorCode());
 
     // Create a first row
-    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, \"first\", 123, 0.123)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (NULL, 'first', 123, 0.123)"));
     EXPECT_EQ(1, db.getLastInsertRowid());
     EXPECT_EQ(1, db.getTotalChanges());
 
@@ -1000,16 +1332,221 @@ TEST(Statement, getColumns)
     EXPECT_EQ(1, testStruct.id);
     EXPECT_EQ("first", testStruct.msg);
     EXPECT_EQ(123, testStruct.integer);
-    EXPECT_EQ(0.123, testStruct.real);
+    EXPECT_DOUBLE_EQ(0.123, testStruct.real);
 
     // Get only the first 2 columns
     auto testStruct2 = query.getColumns<GetRowTestStruct, 2>();
     EXPECT_EQ(1, testStruct2.id);
     EXPECT_EQ("first", testStruct2.msg);
     EXPECT_EQ(-1, testStruct2.integer);
-    EXPECT_EQ(0.0, testStruct2.real);
+    EXPECT_DOUBLE_EQ(0.0, testStruct2.real);
 }
-#endif
+
+TEST(Statement, getColumnsNullableText)
+{
+    struct NullableText
+    {
+        const char* text;
+    };
+
+    struct StringText
+    {
+        std::string text;
+    };
+
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    ASSERT_EQ(0, db.exec("CREATE TABLE test (value TEXT)"));
+    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES (NULL)"));
+    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES ('')"));
+    ASSERT_EQ(1, db.exec("INSERT INTO test VALUES ('hello')"));
+
+    SQLite::Statement query(db, "SELECT value FROM test ORDER BY rowid");
+
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_TRUE(query.getColumn(0).isNull());
+    const auto nullRow = query.getColumns<NullableText, 1>();
+    EXPECT_EQ(nullptr, nullRow.text);
+    const char* nullText = query.getColumn(0);
+    EXPECT_EQ(nullptr, nullText);
+    EXPECT_STREQ("", query.getColumn(0).getText()); // Keep the safe default.
+    EXPECT_EQ(nullptr, query.getColumn(0).getText(nullptr));
+    EXPECT_STREQ("[null]", query.getColumn(0).getText("[null]"));
+    const std::string nullString = query.getColumn(0);
+    EXPECT_TRUE(nullString.empty());
+    const std::string_view nullView = query.getColumn(0);
+    EXPECT_TRUE(nullView.empty());
+    const auto nullStringRow = query.getColumns<StringText, 1>();
+    EXPECT_TRUE(nullStringRow.text.empty());
+
+    ASSERT_TRUE(query.executeStep());
+    EXPECT_FALSE(query.getColumn(0).isNull());
+    const auto emptyRow = query.getColumns<NullableText, 1>();
+    ASSERT_NE(nullptr, emptyRow.text);
+    EXPECT_STREQ("", emptyRow.text);
+    const char* emptyText = query.getColumn(0);
+    ASSERT_NE(nullptr, emptyText);
+    EXPECT_STREQ("", emptyText);
+    const auto emptyStringRow = query.getColumns<StringText, 1>();
+    EXPECT_EQ("", emptyStringRow.text);
+
+    ASSERT_TRUE(query.executeStep());
+    const auto textRow = query.getColumns<NullableText, 1>();
+    ASSERT_NE(nullptr, textRow.text);
+    EXPECT_STREQ("hello", textRow.text);
+    const char* text = query.getColumn(0);
+    ASSERT_NE(nullptr, text);
+    EXPECT_STREQ("hello", text);
+    const auto textStringRow = query.getColumns<StringText, 1>();
+    EXPECT_EQ("hello", textStringRow.text);
+
+    EXPECT_FALSE(query.executeStep());
+}
+
+TEST(Statement, rowIteratorTraits)
+{
+    using Iter = SQLite::Statement::RowIterator;
+    using Traits = std::iterator_traits<Iter>;
+
+    static_assert(std::is_same<Traits::iterator_category, std::input_iterator_tag>::value,
+                  "RowIterator must be an input iterator");
+    static_assert(std::is_same<Traits::value_type, SQLite::Statement>::value,
+                  "value_type must be Statement");
+    static_assert(std::is_same<Traits::reference, SQLite::Statement&>::value,
+                  "reference must be Statement&");
+    static_assert(std::is_same<Traits::pointer, SQLite::Statement*>::value,
+                  "pointer must be Statement*");
+    static_assert(std::is_same<Traits::difference_type, std::ptrdiff_t>::value,
+                  "difference_type must be ptrdiff_t");
+}
+
+TEST(Statement, rangeBasedFor)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, msg TEXT, val INTEGER)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (1, 'first',  10)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (2, 'second', 20)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (3, 'third',  30)"));
+
+    // Basic range-based for loop: iterator dereferences to the Statement itself
+    SQLite::Statement query(db, "SELECT id, msg, val FROM test ORDER BY id");
+    int rowCount = 0;
+    for (SQLite::Statement& row : query)
+    {
+        ++rowCount;
+        EXPECT_EQ(rowCount,            row.getColumn(0).getInt());
+        EXPECT_EQ(rowCount * 10,       row.getColumn(2).getInt());
+    }
+    EXPECT_EQ(3, rowCount);
+
+    // Re-iterating the same Statement must reset and start over
+    rowCount = 0;
+    for (SQLite::Statement& row : query)
+    {
+        ++rowCount;
+        EXPECT_EQ(rowCount, row.getColumn(0).getInt());
+    }
+    EXPECT_EQ(3, rowCount);
+}
+
+TEST(Statement, rangeBasedForEmpty)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY)"));
+
+    // Empty table: loop body must never execute
+    SQLite::Statement query(db, "SELECT * FROM test");
+    int rowCount = 0;
+    for (SQLite::Statement& row : query)
+    {
+        (void)row;
+        ++rowCount;
+    }
+    EXPECT_EQ(0, rowCount);
+}
+
+TEST(Statement, rangeBasedForWithBind)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, val INTEGER)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (1, 5)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (2, 15)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (3, 25)"));
+
+    // Only rows with val > 10 should be visited
+    SQLite::Statement query(db, "SELECT id, val FROM test WHERE val > ? ORDER BY id");
+    query.bind(1, 10);
+    int rowCount = 0;
+    for (SQLite::Statement& row : query)
+    {
+        ++rowCount;
+        EXPECT_GT(row.getColumn(1).getInt(), 10);
+    }
+    EXPECT_EQ(2, rowCount);
+}
+
+TEST(Statement, rowIteratorDirectUsage)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, val INTEGER)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (1, 10)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (2, 20)"));
+    EXPECT_EQ(1, db.exec("INSERT INTO test VALUES (3, 30)"));
+
+    SQLite::Statement query(db, "SELECT id, val FROM test ORDER BY id");
+    
+    // Test direct usage of begin() and end()
+    auto it = query.begin();
+    auto endIt = query.end();
+    
+    // Test operator!= (already covered by range-based for, but explicit test for clarity)
+    int count = 0;
+    while (it != endIt)
+    {
+        ++count;
+        EXPECT_EQ(count, (*it).getColumn(0).getInt());
+        ++it;
+    }
+    EXPECT_EQ(3, count);
+    
+    // Reset and test post-increment operator
+    it = query.begin();
+    count = 0;
+    while (it != endIt)
+    {
+        ++count;
+        EXPECT_EQ(count, (*it).getColumn(0).getInt());
+        it++;
+    }
+    EXPECT_EQ(3, count);
+    
+    // Test operator== with end iterator
+    it = query.end();
+    EXPECT_TRUE(it == endIt);
+    EXPECT_FALSE(it != endIt);
+    
+    // Test operator== and operator!= with end iterator obtained from a different call
+    SQLite::Statement query2(db, "SELECT id, val FROM test ORDER BY id");
+    auto it2 = query2.end();
+    EXPECT_TRUE(it == it2);
+    EXPECT_FALSE(it != it2);
+    
+    // Test operator!= with different statements
+    SQLite::Statement query3(db, "SELECT id, val FROM test ORDER BY id");
+    auto it3 = query3.begin();
+    auto endIt3 = query3.end();
+    EXPECT_TRUE(it3 != endIt3);
+    EXPECT_FALSE(it3 == endIt3);
+    
+    // Advance to end and check equality
+    while (it3 != endIt3)
+        ++it3;
+    EXPECT_TRUE(it3 == endIt3);
+    EXPECT_FALSE(it3 != endIt3);
+}
 
 TEST(Statement, getBindParameterCount)
 {
@@ -1025,4 +1562,26 @@ TEST(Statement, getBindParameterCount)
 
     SQLite::Statement query3(db, "SELECT id, msg FROM test");
     EXPECT_EQ(0, query3.getBindParameterCount());
+}
+
+TEST(Statement, getChanges)
+{
+    // Create a new database
+    SQLite::Database db(":memory:", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+    EXPECT_EQ(0, db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)"));
+
+    // A single-row INSERT reports one change
+    SQLite::Statement insert(db, "INSERT INTO test VALUES (NULL, 'first')");
+    EXPECT_EQ(1, insert.exec());
+    EXPECT_EQ(1, insert.getChanges());
+
+    // A second INSERT, executed by reusing the prepared statement, still reports one change
+    insert.reset();
+    EXPECT_EQ(1, insert.exec());
+    EXPECT_EQ(1, insert.getChanges());
+
+    // An UPDATE touching every row reports the number of rows modified
+    SQLite::Statement update(db, "UPDATE test SET value = 'updated'");
+    EXPECT_EQ(2, update.exec());
+    EXPECT_EQ(2, update.getChanges());
 }

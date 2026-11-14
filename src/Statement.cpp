@@ -3,7 +3,7 @@
  * @ingroup SQLiteCpp
  * @brief   A prepared SQLite Statement is a compiled SQL query ready to be executed, pointing to a row of result.
  *
- * Copyright (c) 2012-2021 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
@@ -16,6 +16,17 @@
 #include <SQLiteCpp/Exception.h>
 
 #include <sqlite3.h>
+
+// check for if SQLite3 version >= 3.14.0
+#if SQLITE_VERSION_NUMBER < 3014000
+    #warning "SQLite3 version is less than 3.14.0, so expanded SQL is not available"
+    #warning "To use expanded SQL, please upgrade to SQLite3 version 3.14.0 or later"
+    #warning "If you want to disable this warning, define SQLITECPP_DISABLE_SQLITE3_EXPANDED_SQL"
+    #warning "or use the specific project option in your build system"
+    #warning "disabling expanded SQL support"
+    #define SQLITECPP_DISABLE_SQLITE3_EXPANDED_SQL
+#endif
+
 
 namespace SQLite
 {
@@ -33,17 +44,19 @@ Statement::Statement(Statement&& aStatement) noexcept :
     mpSQLite(aStatement.mpSQLite),
     mpPreparedStatement(std::move(aStatement.mpPreparedStatement)),
     mColumnCount(aStatement.mColumnCount),
+    mReprepareCount(aStatement.mReprepareCount),
     mbHasRow(aStatement.mbHasRow),
     mbDone(aStatement.mbDone),
     mColumnNames(std::move(aStatement.mColumnNames))
 {
     aStatement.mpSQLite = nullptr;
     aStatement.mColumnCount = 0;
+    aStatement.mReprepareCount = 0;
     aStatement.mbHasRow = false;
     aStatement.mbDone = false;
 }
 
-// Reset the statement to make it ready for a new execution (see also #clearBindings() bellow)
+// Reset the statement to make it ready for a new execution (see also #clearBindings() below)
 void Statement::reset()
 {
     const int ret = tryReset();
@@ -100,8 +113,17 @@ void Statement::bind(const int aIndex, const double aValue)
 // Bind a string value to a parameter "?", "?NNN", ":VVV", "@VVV" or "$VVV" in the SQL prepared statement
 void Statement::bind(const int aIndex, const std::string& aValue)
 {
-    const int ret = sqlite3_bind_text(getPreparedStatement(), aIndex, aValue.c_str(),
-                                      static_cast<int>(aValue.size()), SQLITE_TRANSIENT);
+    const int ret = sqlite3_bind_text64(getPreparedStatement(), aIndex, aValue.c_str(),
+                                        static_cast<sqlite3_uint64>(aValue.size()), SQLITE_TRANSIENT, SQLITE_UTF8);
+    check(ret);
+}
+
+// Bind a string_view value to a parameter "?", "?NNN", ":VVV", "@VVV" or "$VVV" in the SQL prepared statement
+void Statement::bind(const int aIndex, const std::string_view aValue)
+{
+    const char* data = aValue.empty() ? "" : aValue.data();
+    const int ret = sqlite3_bind_text64(getPreparedStatement(), aIndex, data,
+                                        aValue.size(), SQLITE_TRANSIENT, SQLITE_UTF8);
     check(ret);
 }
 
@@ -119,11 +141,28 @@ void Statement::bind(const int aIndex, const void* apValue, const int aSize)
     check(ret);
 }
 
+// Bind a binary blob using a 64-bit size and SQLITE_TRANSIENT
+void Statement::bind64(const int aIndex, const void* apValue, const uint64_t aSize)
+{
+    const int ret = sqlite3_bind_blob64(getPreparedStatement(), aIndex, apValue,
+                                        static_cast<sqlite3_uint64>(aSize), SQLITE_TRANSIENT);
+    check(ret);
+}
+
 // Bind a string value to a parameter "?", "?NNN", ":VVV", "@VVV" or "$VVV" in the SQL prepared statement
 void Statement::bindNoCopy(const int aIndex, const std::string& aValue)
 {
-    const int ret = sqlite3_bind_text(getPreparedStatement(), aIndex, aValue.c_str(),
-                                      static_cast<int>(aValue.size()), SQLITE_STATIC);
+    const int ret = sqlite3_bind_text64(getPreparedStatement(), aIndex, aValue.c_str(),
+                                        static_cast<sqlite3_uint64>(aValue.size()), SQLITE_STATIC, SQLITE_UTF8);
+    check(ret);
+}
+
+// Bind a string value to a parameter "?", "?NNN", ":VVV", "@VVV" or "$VVV" in the SQL prepared statement
+void Statement::bindNoCopy(const int aIndex, const std::string_view aValue)
+{
+    const char* data = aValue.empty() ? "" : aValue.data();
+    const int ret = sqlite3_bind_text64(getPreparedStatement(), aIndex, data,
+                                        aValue.size(), SQLITE_STATIC, SQLITE_UTF8);
     check(ret);
 }
 
@@ -138,6 +177,14 @@ void Statement::bindNoCopy(const int aIndex, const char* apValue)
 void Statement::bindNoCopy(const int aIndex, const void* apValue, const int aSize)
 {
     const int ret = sqlite3_bind_blob(getPreparedStatement(), aIndex, apValue, aSize, SQLITE_STATIC);
+    check(ret);
+}
+
+// Bind a binary blob using a 64-bit size and SQLITE_STATIC
+void Statement::bindNoCopy64(const int aIndex, const void* apValue, const uint64_t aSize)
+{
+    const int ret = sqlite3_bind_blob64(getPreparedStatement(), aIndex, apValue,
+                                        static_cast<sqlite3_uint64>(aSize), SQLITE_STATIC);
     check(ret);
 }
 
@@ -199,7 +246,20 @@ int Statement::tryExecuteStep() noexcept
         return SQLITE_MISUSE; // Statement needs to be reseted !
     }
 
-    const int ret = sqlite3_step(mpPreparedStatement.get());
+    sqlite3_stmt* const pStmt = mpPreparedStatement.get();
+    const int ret = sqlite3_step(pStmt);
+    // sqlite3_step() may automatically reprepare the statement after a schema change.
+    // sqlite3_stmt_status() requires a non-null statement (unlike sqlite3_step()).
+    if (pStmt)
+    {
+        const int reprepareCount = sqlite3_stmt_status(pStmt, SQLITE_STMTSTATUS_REPREPARE, 0);
+        if (reprepareCount != mReprepareCount)
+        {
+            mReprepareCount = reprepareCount;
+            mColumnCount = sqlite3_column_count(pStmt);
+            mColumnNames.clear();
+        }
+    }
     if (SQLITE_ROW == ret) // one row is ready : call getColumn(N) to access it
     {
         mbHasRow = true;
@@ -264,6 +324,13 @@ const char* Statement::getColumnOriginName(const int aIndex) const
     checkIndex(aIndex);
     return sqlite3_column_origin_name(getPreparedStatement(), aIndex);
 }
+
+// Return the original table name for the specified result column.
+const char* Statement::getColumnTableName(const int aIndex) const
+{
+    checkIndex(aIndex);
+    return sqlite3_column_table_name(getPreparedStatement(), aIndex);
+}
 #endif
 
 // Return the index of the specified (potentially aliased) column name
@@ -275,7 +342,10 @@ int Statement::getColumnIndex(const char* apName) const
         for (int i = 0; i < mColumnCount; ++i)
         {
             const char* pName = sqlite3_column_name(getPreparedStatement(), i);
-            mColumnNames[pName] = i;
+            if (pName)
+            {
+                mColumnNames[pName] = i;
+            }
         }
     }
 
@@ -288,7 +358,7 @@ int Statement::getColumnIndex(const char* apName) const
     return iIndex->second;
 }
 
-const char * Statement::getColumnDeclaredType(const int aIndex) const
+const char* Statement::getColumnDeclaredType(const int aIndex) const
 {
     checkIndex(aIndex);
     const char * result = sqlite3_column_decltype(getPreparedStatement(), aIndex);
@@ -331,13 +401,62 @@ const char* Statement::getErrorMsg() const noexcept
     return sqlite3_errmsg(mpSQLite);
 }
 
+
 // Return a UTF-8 string containing the SQL text of prepared statement with bound parameters expanded.
 std::string Statement::getExpandedSQL() const {
+    #ifdef SQLITECPP_DISABLE_SQLITE3_EXPANDED_SQL
+    throw SQLite::Exception("this version of SQLiteCpp does not support expanded SQL");
+    #else
     char* expanded = sqlite3_expanded_sql(getPreparedStatement());
-    std::string expandedString(expanded);
+    std::string expandedString(expanded ? expanded : "");
     sqlite3_free(expanded);
     return expandedString;
+    #endif
 }
+
+Statement::RowIterator::RowIterator(Statement* apStatement): mpStatement(apStatement)
+{}
+
+Statement::RowIterator& Statement::RowIterator::operator++()
+{
+    if (!mpStatement->executeStep())
+        mpStatement = nullptr;
+    return *this;
+}
+
+void Statement::RowIterator::operator++(int)
+{
+    ++(*this);
+}
+
+bool Statement::RowIterator::operator==(const RowIterator& aOther) const
+{
+    return mpStatement == aOther.mpStatement;
+}
+
+bool Statement::RowIterator::operator!=(const RowIterator& aOther) const
+{
+    return !this->operator==(aOther);
+}
+
+Statement& Statement::RowIterator::operator*() const
+{
+    return *mpStatement;
+}
+
+Statement::RowIterator Statement::begin()
+{
+    reset();
+    if (executeStep())
+        return RowIterator { this };
+    return RowIterator { nullptr };
+}
+
+Statement::RowIterator Statement::end()
+{
+    return RowIterator{ nullptr };
+}
+
 
 // Prepare SQLite statement object and return shared pointer to this object
 Statement::TStatementPtr Statement::prepareStatement()

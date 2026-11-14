@@ -3,18 +3,20 @@
  * @ingroup SQLiteCpp
  * @brief   Encapsulation of a Column in a row of the result pointed by the prepared SQLite::Statement.
  *
- * Copyright (c) 2012-2021 Sebastien Rombauts (sebastien.rombauts@gmail.com)
+ * Copyright (c) 2012-2026 Sebastien Rombauts (sebastien.rombauts@gmail.com)
  *
  * Distributed under the MIT License (MIT) (See accompanying file LICENSE.txt
  * or copy at http://opensource.org/licenses/MIT)
  */
 #pragma once
 
+#include <SQLiteCpp/SQLiteCppExport.h>
 #include <SQLiteCpp/Statement.h>
 #include <SQLiteCpp/Exception.h>
 
 #include <string>
 #include <memory>
+#include <string_view>
 
 // Forward declarations to avoid inclusion of <sqlite3.h> in a header
 struct sqlite3_stmt;
@@ -22,16 +24,17 @@ struct sqlite3_stmt;
 namespace SQLite
 {
 
-extern const int INTEGER;   ///< SQLITE_INTEGER
-extern const int FLOAT;     ///< SQLITE_FLOAT
-extern const int TEXT;      ///< SQLITE_TEXT
-extern const int BLOB;      ///< SQLITE_BLOB
-extern const int Null;      ///< SQLITE_NULL
+/// SQLite result type codes, usable in constant expressions without including sqlite3.h.
+inline constexpr int INTEGER = 1;   ///< SQLITE_INTEGER
+inline constexpr int FLOAT   = 2;   ///< SQLITE_FLOAT
+inline constexpr int TEXT    = 3;   ///< SQLITE_TEXT
+inline constexpr int BLOB    = 4;   ///< SQLITE_BLOB
+inline constexpr int Null    = 5;   ///< SQLITE_NULL
 
 /**
  * @brief Encapsulation of a Column in a row of the result pointed by the prepared Statement.
  *
- *  A Column is a particular field of SQLite data in the current row of result
+ * A Column is a particular field of SQLite data in the current row of result
  * of the Statement : it points to a single cell.
  *
  * Its value can be expressed as a text, and, when applicable, as a numeric
@@ -44,7 +47,7 @@ extern const int Null;      ///< SQLITE_NULL
  *    because of the way it shares the underling SQLite precompiled statement
  *    in a custom shared pointer (See the inner class "Statement::Ptr").
  */
-class Column
+class SQLITECPP_API Column
 {
 public:
     /**
@@ -54,10 +57,6 @@ public:
      * @param[in] aIndex    Index of the column in the row of result, starting at 0
      */
     explicit Column(const Statement::TStatementPtr& aStmtPtr, int aIndex);
-
-    // default destructor: the finalization will be done by the destructor of the last shared pointer
-    // default copy constructor and assignment operator are perfectly suited :
-    // they copy the Statement::Ptr which in turn increments the reference counter.
 
     /**
      * @brief Return a pointer to the named assigned to this result column (potentially aliased)
@@ -75,6 +74,16 @@ public:
      * - and also when compiling this wrapper.
      */
     const char* getOriginName() const noexcept;
+
+    /**
+     * @brief Return the original table name for this result column.
+     *
+     * @return UTF-8 table name, or nullptr for an expression or an allocation failure.
+     * @note Requires SQLITE_ENABLE_COLUMN_METADATA in both SQLite and this wrapper.
+     * @warning The pointer belongs to the prepared statement. Copy it before the statement is finalized,
+     *          automatically reprepared, or the same metadata is requested in another encoding.
+     */
+    const char* getTableName() const noexcept;
 #endif
 
     /// Return the integer value of the column.
@@ -86,19 +95,34 @@ public:
     /// Return the double (64bits float) value of the column
     double      getDouble() const noexcept;
     /**
-     * @brief Return a pointer to the text value (NULL terminated string) of the column.
+     * @brief Return a pointer to the UTF-8 text value (NULL-terminated string) of the column.
      *
-     * @warning The value pointed at is only valid while the statement is valid (ie. not finalized),
-     *          thus you must copy it before using it beyond its scope (to a std::string for instance).
+     * @param[in] apDefaultValue Value returned if SQLite returns nullptr (empty string by default).
+     * @return Text pointer, or apDefaultValue if SQLite provides no text pointer.
+     * @note SQLite can return nullptr for SQL NULL or an out-of-memory conversion error.
+     * @warning Type conversions or stepping, resetting, or finalizing the statement may invalidate the
+     *          returned pointer. Copy the text if it must be retained.
      */
     const char* getText(const char* apDefaultValue = "") const noexcept;
     /**
      * @brief Return a pointer to the binary blob value of the column.
      *
-     * @warning The value pointed at is only valid while the statement is valid (ie. not finalized),
-     *          thus you must copy it before using it beyond its scope (to a std::string for instance).
+     * @warning Type conversions or stepping, resetting, or finalizing the statement may invalidate the
+     *          returned pointer. Copy the data if it must be retained.
      */
     const void* getBlob() const noexcept;
+    /**
+     * @brief Return a non-owning byte view of a TEXT or BLOB column.
+     *
+     * TEXT is returned as UTF-8; BLOB bytes are unchanged.
+     * Preserves embedded NUL bytes. SQL NULL and empty values both return an empty view;
+     * use isNull() to distinguish them.
+     *
+     * @return View of the column bytes, without copying them.
+     * @warning A type conversion or stepping, resetting, or finalizing the statement
+     *          may invalidate the view. Copy it to retain the data.
+     */
+    std::string_view getStringView() const;
     /**
      * @brief Return a std::string for a TEXT or BLOB column.
      *
@@ -107,9 +131,12 @@ public:
     std::string getString() const;
 
     /**
-     * @brief Return the type of the value of the column
+     * @brief Return the type of the value of the column using sqlite3_column_type()
      *
      * Return either SQLite::INTEGER, SQLite::FLOAT, SQLite::TEXT, SQLite::BLOB, or SQLite::Null.
+     * This type may change from one row to the next, since
+     * SQLite stores data types dynamically for each value and not per column.
+     * Use Statement::getColumnDeclaredType() to retrieve the declared column type from a SELECT statement.
      *
      * @warning After a type conversion (by a call to a getXxx on a Column of a Yyy type),
      *          the value returned by sqlite3_column_type() is undefined.
@@ -197,13 +224,15 @@ public:
         return getDouble();
     }
     /**
-     * @brief Inline cast operator to char*
+     * @brief Convert to a text pointer, returning nullptr for SQL NULL.
      *
+     * Unlike getText() without arguments, this does not replace a null pointer with an empty string.
+     * @warning Type conversions or stepping, resetting, or finalizing the statement may invalidate the pointer.
      * @see getText
      */
     operator const char*() const
     {
-        return getText();
+        return getText(nullptr);
     }
     /**
      * @brief Inline cast operator to void*
@@ -227,9 +256,21 @@ public:
         return getString();
     }
 
+    /**
+     * @brief Inline cast operator to std::string_view
+     *
+     * Handles BLOB or TEXT, which may contain null bytes within
+     *
+     * @see getStringView
+     */
+    operator std::string_view() const
+    {
+        return getStringView();
+    }
+
 private:
-    Statement::TStatementPtr    mStmtPtr;  ///< Shared Pointer to the prepared SQLite Statement Object
-    int                         mIndex;    ///< Index of the column in the row of result, starting at 0
+    Statement::TStatementPtr    mStmtPtr;   ///< Shared Pointer to the prepared SQLite Statement Object
+    int                         mIndex;     ///< Index of the column in the row of result, starting at 0
 };
 
 /**
@@ -242,9 +283,7 @@ private:
  *
  * @return  Reference to the stream used
  */
-std::ostream& operator<<(std::ostream& aStream, const Column& aColumn);
-
-#if __cplusplus >= 201402L || (defined(_MSC_VER) && _MSC_VER >= 1900) // c++14: Visual Studio 2015
+SQLITECPP_API std::ostream& operator<<(std::ostream& aStream, const Column& aColumn);
 
 // Create an instance of T from the first N columns, see declaration in Statement.h for full details
 template<typename T, int N>
@@ -261,7 +300,5 @@ T Statement::getColumns(const std::integer_sequence<int, Is...>)
 {
     return T{Column(mpPreparedStatement, Is)...};
 }
-
-#endif
 
 }  // namespace SQLite
